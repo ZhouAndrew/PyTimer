@@ -1,83 +1,72 @@
-import unittest
-from data import DataManager  # renamed from TimerManager to DataManager
+import pytest
+import sqlite3
+from typing import Any
 
+from data import DataManager  # Replace with actual module name
 
-class TestDataManager(unittest.TestCase):
-    def setUp(self):
-        # Use in-memory DB and define allowed attributes for consistency
-        self.attrs = {"name", "duration", "start_time", "status"}
-        self.dm = DataManager(":memory:", allowed_attrs=self.attrs)
+@pytest.fixture
+def sample_manager():
+    column_types = {
+        "name": str,
+        "count": int,
+        "active": bool,
+        "rating": float
+    }
+    manager = DataManager(column_types, database_path=":memory:")
+    return manager
 
-    def test_create_and_get_timer(self):
-        timer_id = self.dm.create_timer({
-            "name": "TestTimer",
-            "duration": 100,
-            "start_time": 1234567890,
-            "status": "running"
-        })
-        self.assertIsInstance(timer_id, int)
+def test_add_and_get(sample_manager: DataManager):
+    item_id = sample_manager.add_item({
+        "name": "example",
+        "count": 3,
+        "active": True,
+        "rating": 4.5
+    })
+    assert isinstance(item_id, int)
 
-        timer = self.dm.get_timer(timer_id)
-        self.assertIsNotNone(timer)
-        self.assertEqual(timer["name"], "TestTimer")
-        self.assertEqual(timer["duration"], 100)
-        self.assertEqual(timer["status"], "running")
+    assert sample_manager.get_attr(item_id, "name") == "example"
+    assert sample_manager.get_attr(item_id, "count") == 3
+    assert sample_manager.get_attr(item_id, "active") == True
+    assert sample_manager.get_attr(item_id, "rating") == 4.5
 
-    def test_get_timer_attr(self):
-        tid = self.dm.create_timer({
-            "name": "AttrTimer",
-            "duration": 200,
-            "start_time": 1111111,
-            "status": "idle"
-        })
-        status = self.dm.get_timer_attr(tid, "status")
-        self.assertEqual(status, "idle")
+def test_set_attr(sample_manager: DataManager):
+    item_id = sample_manager.add_item({
+        "name": "initial",
+        "count": 1,
+        "active": False,
+        "rating": 2.0
+    })
 
-    def test_set_timer_attr(self):
-        tid = self.dm.create_timer({
-            "name": "Setter",
-            "duration": 300,
-            "start_time": 2222222,
-            "status": "paused"
-        })
-        self.dm.set_timer_attr(tid, "status", "resumed")
-        new_status = self.dm.get_timer_attr(tid, "status")
-        self.assertEqual(new_status, "resumed")
+    sample_manager.set_attr(item_id, "name", "updated")
+    sample_manager.set_attr(item_id, "count", 42)
+    sample_manager.set_attr(item_id, "active", True)
+    sample_manager.set_attr(item_id, "rating", 3.14)
 
-    def test_find_timer(self):
-        self.dm.create_timer({
-            "name": "FindMe",
-            "duration": 999,
-            "start_time": 0,
-            "status": "active"
-        })
-        result = self.dm.find_timer({"name": "FindMe", "status": "active"})
-        self.assertTrue(len(result) >= 1)
-        self.assertIsInstance(result[0], int)
+    assert sample_manager.get_attr(item_id, "name") == "updated"
+    assert sample_manager.get_attr(item_id, "count") == 42
+    assert sample_manager.get_attr(item_id, "active") == True
+    assert sample_manager.get_attr(item_id, "rating") == 3.14
 
-    def test_rm_timer(self):
-        tid = self.dm.create_timer({
-            "name": "DeleteMe",
-            "duration": 50,
-            "start_time": 0,
-            "status": "queued"
-        })
-        self.dm.rm_timer(tid)
-        self.assertIsNone(self.dm.get_timer(tid))
+def test_rm_item(sample_manager: DataManager):
+    item_id = sample_manager.add_item({
+        "name": "to_remove",
+        "count": 7,
+        "active": True,
+        "rating": 1.0
+    })
+    sample_manager.rm_item(item_id)
 
-    def test_invalid_attr(self):
-        tid = self.dm.create_timer({
-            "name": "BadAttr",
-            "duration": 10,
-            "start_time": 0,
-            "status": "ok"
-        })
-        with self.assertRaises(ValueError):
-            self.dm.get_timer_attr(tid, "invalid_column")
+    with pytest.raises(Exception):
+        sample_manager.get_attr(item_id, "name")
 
-        with self.assertRaises(ValueError):
-            self.dm.set_timer_attr(tid, "invalid_column", "x")
-
-
-if __name__ == "__main__":
-    unittest.main()
+def test_find_item(sample_manager: DataManager):
+    ids = [
+        sample_manager.add_item({
+            "name": f"item{i}",
+            "count": i,
+            "active": i % 2 == 0,
+            "rating": i * 0.1
+        }) for i in range(5)
+    ]
+    found = sample_manager.find_item()
+    assert set(found) == set(ids)

@@ -2,7 +2,7 @@ import time
 from typing import Any, Dict, List, Optional
 import sqlite3
 
-class DataManager:
+class DataManagerInterface:
     def __init__(self, column_type_dict:dict,database_path:str="data.db"):
         pass
     def get_attr(self,id:int,attr:str)->Any:

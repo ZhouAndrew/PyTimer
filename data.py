@@ -16,3 +16,6 @@ class DataManagerInterface:
         pass
     def find_item(self,)->tuple[int]:# pyright: ignore[reportReturnType] #return id 
         pass
+    
+class DataManager(DataManagerInterface):
+    pass

@@ -47,7 +47,18 @@ class DataManagerInterface:
         self._db_path = database_path
         self._conn = sqlite3.connect(database_path)
         self._cursor = self._conn.cursor()
-        # 建表（保持你现有的）
+
+        # 进行所有必要的建表和初始化逻辑
+        self._auto_init()
+
+    def _auto_init(self) -> None:
+        # 一律先设置超时（非事务）
+        try:
+            self._cursor.execute("PRAGMA busy_timeout=3000")
+        except sqlite3.OperationalError:
+            pass
+
+        # 构建表结构定义
         column_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT"]
         for name, typ in self._column_types.items():
             if typ is str:
@@ -61,21 +72,8 @@ class DataManagerInterface:
             else:
                 raise TypeError(f"Unsupported column type for '{name}': {typ}")
             column_defs.append(f"{name} {sql_type}")
-        self._cursor.execute(
-            f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
-        )
-        self._conn.commit()
 
-        self._auto_init()
-
-    def _auto_init(self) -> None:
-        # 一律先设置超时（非事务）
-        try:
-            self._cursor.execute("PRAGMA busy_timeout=3000")
-        except sqlite3.OperationalError:
-            pass
-
-        # 内存库跳过
+        # 内存库跳过加锁逻辑，但仍需建表
         db_is_memory = (
             self._db_path == ":memory:" or
             (isinstance(self._db_path, str)
@@ -83,6 +81,10 @@ class DataManagerInterface:
              and "mode=memory" in self._db_path)
         )
         if db_is_memory:
+            self._cursor.execute(
+                f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
+            )
+            self._conn.commit()
             return
 
         # 用进程间文件锁串行化初始化，避免并发切 WAL/建表引发 I/O error
@@ -106,6 +108,11 @@ class DataManagerInterface:
             except sqlite3.OperationalError:
                 pass
             self._conn.commit()
+
+            # 创建主表
+            self._cursor.execute(
+                f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
+            )
 
             # 幂等的 meta 表
             self._cursor.execute(

@@ -1,0 +1,101 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-7.4.4, pluggy-1.0.0 -- /home/andrew/anaconda3/bin/python
+cachedir: .pytest_cache
+rootdir: /media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer
+plugins: anyio-4.2.0
+collecting ... collected 11 items
+
+test.py::test_add_and_get PASSED                                         [  9%]
+test.py::test_set_attr PASSED                                            [ 18%]
+test.py::test_rm_item PASSED                                             [ 27%]
+test.py::test_find_item PASSED                                           [ 36%]
+test.py::test_add_and_get_basic PASSED                                   [ 45%]
+test.py::test_add_and_get_json_types PASSED                              [ 54%]
+test.py::test_find_items PASSED                                          [ 63%]
+test.py::test_multithread_concurrent_writes PASSED                       [ 72%]
+test.py::test_multiprocess_concurrent_writes FAILED                      [ 81%]
+test_concurrency.py::test_multithread_access PASSED                      [ 90%]
+test_concurrency.py::test_multiprocess_access PASSED                     [100%]
+
+=================================== FAILURES ===================================
+_____________________ test_multiprocess_concurrent_writes ______________________
+
+    def test_multiprocess_concurrent_writes():
+        procs = [multiprocessing.Process(target=process_worker, args=(i,)) for i in range(5)]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join()
+    
+        total_rows = count_rows()
+>       assert total_rows == 5 * 50, f"Expected 250 rows, got {total_rows}"
+E       AssertionError: Expected 250 rows, got 0
+E       assert 0 == (5 * 50)
+
+test.py:229: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Process Process-1:
+Traceback (most recent call last):
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/test.py", line 201, in process_worker
+    dm = DataManager(column_types, DB_FILE)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/data.py", line 71, in __init__
+    self._auto_init()
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/data.py", line 104, in _auto_init
+    self._cursor.execute(
+sqlite3.OperationalError: disk I/O error
+Process Process-2:
+Traceback (most recent call last):
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/test.py", line 201, in process_worker
+    dm = DataManager(column_types, DB_FILE)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/data.py", line 65, in __init__
+    self._cursor.execute(
+sqlite3.OperationalError: disk I/O error
+Process Process-3:
+Traceback (most recent call last):
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/test.py", line 201, in process_worker
+    dm = DataManager(column_types, DB_FILE)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/data.py", line 65, in __init__
+    self._cursor.execute(
+sqlite3.OperationalError: disk I/O error
+Process Process-4:
+Traceback (most recent call last):
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+Process Process-5:
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/test.py", line 201, in process_worker
+    dm = DataManager(column_types, DB_FILE)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/data.py", line 65, in __init__
+    self._cursor.execute(
+sqlite3.OperationalError: disk I/O error
+Traceback (most recent call last):
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/andrew/anaconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/test.py", line 201, in process_worker
+    dm = DataManager(column_types, DB_FILE)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/media/share/andrew/ubuntu/Documents/shared/AppData/vscode/PyTimer/data.py", line 65, in __init__
+    self._cursor.execute(
+sqlite3.OperationalError: disk I/O error
+=========================== short test summary info ============================
+FAILED test.py::test_multiprocess_concurrent_writes - AssertionError: Expecte...
+========================= 1 failed, 10 passed in 2.32s =========================

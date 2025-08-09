@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 
 class DataManagerInterface:
@@ -41,12 +41,23 @@ class DataManagerInterface:
 
     TABLE_NAME = "items"
 
-    def __init__(self, column_type_dict: Dict[str, type], database_path: str = "data.db") -> None:
+    def __init__(self, column_type_dict: Dict[str, type], database_path: str = "data.db", allow_cross_thread: bool = False) -> None:
         self._column_types = dict(column_type_dict)
-        self._conn = sqlite3.connect(database_path)
+        # 允许跨线程使用同一个连接（默认 False）
+        self._conn = sqlite3.connect(
+            database_path,
+            check_same_thread=not allow_cross_thread,  # 如果 allow_cross_thread=True，则 check_same_thread=False
+            isolation_level=None  # 手动控制事务，避免自动提交
+        )
         self._cursor = self._conn.cursor()
 
-        # Build CREATE TABLE statement from column definitions
+        # 开启 WAL 模式 & 设置同步等级 & 超时
+        self._cursor.execute("PRAGMA journal_mode=WAL")
+        self._cursor.execute("PRAGMA synchronous=NORMAL")
+        self._cursor.execute("PRAGMA busy_timeout=3000")  # 等待锁3秒
+        self._conn.commit()
+
+        # 建表
         column_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT"]
         for name, typ in self._column_types.items():
             if typ is str:
@@ -64,6 +75,7 @@ class DataManagerInterface:
             f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
         )
         self._conn.commit()
+
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -145,7 +157,7 @@ class DataManagerInterface:
             tuple(values),
         )
         self._conn.commit()
-        return int(cur.lastrowid)
+        return int(cur.lastrowid) # pyright: ignore[reportArgumentType]
 
     def rm_item(self, id: int) -> None:
         """Remove item ``id`` from the database."""
@@ -157,10 +169,35 @@ class DataManagerInterface:
             raise ValueError(f"No item with id {id}")
         self._conn.commit()
 
-    def find_item(self) -> Tuple[int, ...]:  # pyright: ignore[reportReturnType]
-        """Return a tuple of all item ids in the database."""
+    def find_item(self, required_attitude: Optional[Dict[str, Any]] = None) -> Tuple[int, ...]:
+        """Return a tuple of item ids, optionally filtered by attribute equality.
 
-        cur = self._cursor.execute(f"SELECT id FROM {self.TABLE_NAME}")
+        Parameters
+        ----------
+        required_attitude : dict | None
+            Mapping of column names to required values. If None or empty,
+            all item ids are returned.
+        """
+        if required_attitude is None or len(required_attitude) == 0:
+            cur = self._cursor.execute(f"SELECT id FROM {self.TABLE_NAME}")
+            return tuple(row[0] for row in cur.fetchall())
+
+        if not isinstance(required_attitude, dict):
+            raise TypeError("required_attitude must be a dict or None")
+
+        clauses = []
+        values: list[Any] = []
+        for attr, value in required_attitude.items():
+            # validate & encode so types/json/bool match stored representation
+            self._validate_attr(attr)
+            clauses.append(f"{attr} = ?")
+            values.append(self._encode_value(attr, value))
+
+        where = " AND ".join(clauses) if clauses else "1"
+        cur = self._cursor.execute(
+            f"SELECT id FROM {self.TABLE_NAME} WHERE {where}",
+            tuple(values),
+        )
         return tuple(row[0] for row in cur.fetchall())
 
 

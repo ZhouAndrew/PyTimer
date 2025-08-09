@@ -1,4 +1,10 @@
+import os
+import time
+import threading
+import multiprocessing
 import pytest
+import pytest
+from data import DataManager
 import sqlite3
 from typing import Any
 
@@ -166,3 +172,58 @@ def test_find_items(manager: DataManager):
 
     found_ids = manager.find_item()
     assert set(found_ids) == set(ids)
+
+
+DB_FILE = "test_concurrency.db"
+
+# 公共列定义
+column_types = {
+    "name": str,
+    "count": int
+}
+
+@pytest.fixture(autouse=True)
+def cleanup_db():
+    """在每个测试前清理数据库文件"""
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+    yield
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+
+def thread_worker(thread_id, loops=50):
+    dm = DataManager(column_types, DB_FILE)
+    for i in range(loops):
+        dm.add_item({"name": f"t{thread_id}", "count": i})
+        time.sleep(0.005)  # 模拟真实操作延迟
+
+def process_worker(proc_id, loops=50):
+    dm = DataManager(column_types, DB_FILE)
+    for i in range(loops):
+        dm.add_item({"name": f"p{proc_id}", "count": i})
+        time.sleep(0.005)
+
+
+def count_rows():
+    dm = DataManager(column_types, DB_FILE)
+    return len(dm.find_item())
+
+def test_multithread_concurrent_writes():
+    threads = [threading.Thread(target=thread_worker, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    total_rows = count_rows()
+    assert total_rows == 5 * 50, f"Expected 250 rows, got {total_rows}"
+
+def test_multiprocess_concurrent_writes():
+    procs = [multiprocessing.Process(target=process_worker, args=(i,)) for i in range(5)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+
+    total_rows = count_rows()
+    assert total_rows == 5 * 50, f"Expected 250 rows, got {total_rows}"

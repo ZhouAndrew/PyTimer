@@ -27,6 +27,7 @@ import sqlite3
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 
+
 class DataManagerInterface:
     """Manage a simple SQLite table.
 

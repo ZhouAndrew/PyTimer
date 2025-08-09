@@ -44,7 +44,10 @@ class DataManagerInterface:
     # 在 DataManagerInterface 里新增：
     def __init__(self, column_type_dict, database_path: str = "data.db"):
         self._column_types = dict(column_type_dict)
-        self._db_path = database_path
+        path = database_path
+        if isinstance(path, str) and path != ":memory:" and not (path.startswith("file:") and "mode=memory" in path):
+            path = os.path.abspath(path)
+        self._db_path = path
         self._conn = sqlite3.connect(database_path)
         self._cursor = self._conn.cursor()
         # 建表（保持你现有的）

@@ -27,6 +27,10 @@ import sqlite3
 from typing import Any, Dict, Iterable, Optional, Tuple
 import fcntl,os
 
+import urllib 
+import os
+os.environ["SQLITE_TMPDIR"] = os.path.dirname(self._db_path) or "."
+
 
 class DataManagerInterface:
     """Manage a simple SQLite table.
@@ -43,25 +47,38 @@ class DataManagerInterface:
     TABLE_NAME = "items"
     # 在 DataManagerInterface 里新增：
     def __init__(self, column_type_dict, database_path: str = "data.db"):
+
         self._column_types = dict(column_type_dict)
+
+        # 规范 & 记录路径
         path = database_path
         if isinstance(path, str) and path != ":memory:" and not (path.startswith("file:") and "mode=memory" in path):
             path = os.path.abspath(path)
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)  # 目录不存在就建
         self._db_path = path
-        self._conn = sqlite3.connect(database_path)
+
+        # 用绝对路径/URI 方式连接（保证可读写可创建）
+        if isinstance(self._db_path, str) and self._db_path != ":memory:" and not self._db_path.startswith("file:"):
+            uri = "file:" + urllib.parse.quote(self._db_path) + "?mode=rwc"
+            self._conn = sqlite3.connect(uri, uri=True, timeout=3.0)
+        else:
+            # :memory: 或已是 file: URI
+            self._conn = sqlite3.connect(self._db_path, uri=self._db_path.startswith("file:"), timeout=3.0)
         self._cursor = self._conn.cursor()
 
-        # 进行所有必要的建表和初始化逻辑
         self._auto_init()
+        print("DB Path:", self._db_path)
+        print("CWD:", os.getcwd())
+        print("Exists?", os.path.exists(self._db_path))
 
     def _auto_init(self) -> None:
-        # 一律先设置超时（非事务）
+        # 先设超时
         try:
             self._cursor.execute("PRAGMA busy_timeout=3000")
         except sqlite3.OperationalError:
             pass
 
-        # 构建表结构定义
+        # 构建表结构
         column_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT"]
         for name, typ in self._column_types.items():
             if typ is str:
@@ -76,48 +93,67 @@ class DataManagerInterface:
                 raise TypeError(f"Unsupported column type for '{name}': {typ}")
             column_defs.append(f"{name} {sql_type}")
 
-        # 内存库跳过加锁逻辑，但仍需建表
+        # 内存库直接建表返回
         db_is_memory = (
             self._db_path == ":memory:" or
-            (isinstance(self._db_path, str)
-             and self._db_path.startswith("file:")
-             and "mode=memory" in self._db_path)
+            (isinstance(self._db_path, str) and self._db_path.startswith("file:") and "mode=memory" in self._db_path)
         )
         if db_is_memory:
-            self._cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
-            )
+            self._cursor.execute(f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})")
             self._conn.commit()
             return
 
-        # 用进程间文件锁串行化初始化，避免并发切 WAL/建表引发 I/O error
+        # 进程间初始化锁
         lockfd = None
-        if fcntl is not None and isinstance(self._db_path, str) and self._db_path not in (":memory:", ""):
+        if fcntl is not None and isinstance(self._db_path, str):
             lock_path = self._db_path + ".initlock"
-            os.makedirs(os.path.dirname(os.path.abspath(self._db_path)) or ".", exist_ok=True)
             lockfd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
             fcntl.flock(lockfd, fcntl.LOCK_EX)
 
         try:
-            # PRAGMA 必须在事务外；失败就忽略并用默认模式
+            # 清理可能残留的 wal/shm（上锁后做，避免并发）
+            # for suf in ("-wal", "-shm"):
+            #     p = self._db_path + suf
+            #     if os.path.exists(p):
+            #         try:
+            #             os.remove(p)
+            #         except OSError:
+            #             pass
+
+            wal_ok = 0
+            # 尝试启用 WAL；遇到 "disk I/O error" 则降级到 DELETE
+            # 原先尝试 WAL 的位置，改成永远 DELETE（先拉绿）
             wal_ok = 0
             try:
-                mode = self._cursor.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-                wal_ok = 1 if (isinstance(mode, str) and mode.lower() == "wal") else 0
-            except sqlite3.OperationalError:
-                wal_ok = 0
-            try:
-                self._cursor.execute("PRAGMA synchronous=NORMAL")
+                self._cursor.execute("PRAGMA journal_mode=DELETE")
             except sqlite3.OperationalError:
                 pass
-            self._conn.commit()
 
-            # 创建主表
-            self._cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
-            )
+            try:
+                self._cursor.execute("PRAGMA synchronous=FULL")  # DELETE 模式下 FULL 更稳
+            except sqlite3.OperationalError:
+                pass
 
-            # 幂等的 meta 表
+            # try:
+            #     mode = self._cursor.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            #     wal_ok = 1 if (isinstance(mode, str) and mode.lower() == "wal") else 0
+            # except sqlite3.OperationalError as e:
+            #     if "disk i/o error" in str(e).lower():
+            #         try:
+            #             self._cursor.execute("PRAGMA journal_mode=DELETE")
+            #         except sqlite3.OperationalError:
+            #             pass
+            #         wal_ok = 0
+            #     else:
+            #         raise
+
+            # try:
+            #     self._cursor.execute("PRAGMA synchronous=NORMAL")
+            # except sqlite3.OperationalError:
+            #     pass
+
+            # 主表 & meta（幂等）
+            self._cursor.execute(f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})")
             self._cursor.execute(
                 """CREATE TABLE IF NOT EXISTS dm_meta (
                        id INTEGER PRIMARY KEY CHECK (id=1),
@@ -127,7 +163,6 @@ class DataManagerInterface:
             )
             self._cursor.execute("INSERT OR IGNORE INTO dm_meta (id, wal_enabled) VALUES (1, 0)")
 
-            # 仅当两列都存在时才建索引
             if "status" in self._column_types and "end_time" in self._column_types:
                 self._cursor.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_status_end "

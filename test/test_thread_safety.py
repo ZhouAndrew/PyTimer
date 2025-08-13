@@ -5,7 +5,7 @@ from typing import Dict
 
 from data import DataManager
 from main import TimerManager
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # DataManager multi-thread tests

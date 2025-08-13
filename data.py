@@ -314,25 +314,42 @@ class DataManagerInterface:
         if cur.rowcount == 0:
             raise ValueError(f"No item with id {id}")
 
-    def find_item(self, required_attitude: Optional[Dict[str, Any]] = None) -> Tuple[int, ...]:
-        """Return a tuple of item ids, optionally filtered by attribute equality.
+    def find_item(
+        self,
+        required_attributes: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Tuple[int, ...]:
+        """Return a tuple of item ids filtered by attribute equality.
 
         Parameters
         ----------
-        required_attitude : dict | None
-            Mapping of column names to required values. If None or empty,
-            all item ids are returned.
+        required_attributes:
+            Mapping of column names to required values. If ``None`` or empty, all
+            item ids are returned.
+
+        Notes
+        -----
+        ``required_attitude`` is accepted as a deprecated keyword for
+        backwards compatibility.
         """
-        if required_attitude is None or len(required_attitude) == 0:
-            cur = self._execute_read_with_retry(f"SELECT id FROM {self._table_name}")
+
+        if required_attributes is None:
+            required_attributes = kwargs.pop("required_attitude", None)
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword argument(s): {unexpected}")
+
+        if required_attributes is None or len(required_attributes) == 0:
+            cur = self._execute_read_with_retry(f"SELECT id FROM {self.TABLE_NAME}")
+
             return tuple(row[0] for row in cur.fetchall())
 
-        if not isinstance(required_attitude, dict):
-            raise TypeError("required_attitude must be a dict or None")
+        if not isinstance(required_attributes, dict):
+            raise TypeError("required_attributes must be a dict or None")
 
         clauses = []
         values: list[Any] = []
-        for attr, value in required_attitude.items():
+        for attr, value in required_attributes.items():
             # validate & encode so types/json/bool match stored representation
             self._validate_attr(attr)
             clauses.append(f"{attr} = ?")

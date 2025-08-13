@@ -47,12 +47,23 @@ class DataManagerInterface:
     database_path:
         Path to the SQLite database file or ``":memory:"`` for an
         in-memory database.
+    table_name:
+        Name of the table to operate on. Defaults to ``"items"``.
     """
 
     TABLE_NAME = "items"
 
-    def __init__(self, column_type_dict: Dict[str, type], database_path: str = "data.db") -> None:
+    def __init__(
+        self,
+        column_type_dict: Dict[str, type],
+        database_path: str = "data.db",
+        table_name: str = TABLE_NAME,
+    ) -> None:
         self._column_types = dict(column_type_dict)
+        self._table_name = table_name
+        # Maintain ``TABLE_NAME`` as an instance attribute for backward
+        # compatibility with code that accessed it directly.
+        self.TABLE_NAME = self._table_name
 
         # Normalize path & ensure dir exists
         path = database_path
@@ -115,7 +126,7 @@ class DataManagerInterface:
         )
         if db_is_memory:
             self._execute_write_with_retry(
-                f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
+                f"CREATE TABLE IF NOT EXISTS {self._table_name} ({', '.join(column_defs)})"
             )
             return
 
@@ -140,7 +151,7 @@ class DataManagerInterface:
 
             # Create main & meta tables (idempotent)
             self._execute_write_with_retry(
-                f"CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} ({', '.join(column_defs)})"
+                f"CREATE TABLE IF NOT EXISTS {self._table_name} ({', '.join(column_defs)})"
             )
             self._execute_write_with_retry(
                 """
@@ -158,8 +169,8 @@ class DataManagerInterface:
             if "status" in self._column_types and "end_time" in self._column_types:
                 # Index create may still conflict under concurrency -> retry
                 self._execute_write_with_retry(
-                    f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_status_end "
-                    f"ON {self.TABLE_NAME}(status, end_time)"
+                    f"CREATE INDEX IF NOT EXISTS idx_{self._table_name}_status_end "
+                    f"ON {self._table_name}(status, end_time)"
                 )
 
             # meta update is best-effort; keep for compatibility
@@ -252,7 +263,7 @@ class DataManagerInterface:
         """Return the value of ``attr`` for a given item ``id``."""
         self._validate_attr(attr)
         cur = self._execute_read_with_retry(
-            f"SELECT {attr} FROM {self.TABLE_NAME} WHERE id = ?", (id,)
+            f"SELECT {attr} FROM {self._table_name} WHERE id = ?", (id,)
         )
         row = cur.fetchone()
         if row is None:
@@ -263,7 +274,7 @@ class DataManagerInterface:
         """Update ``attr`` for the item ``id`` with ``value``."""
         encoded = self._encode_value(attr, value)
         cur = self._execute_write_with_retry(
-            f"UPDATE {self.TABLE_NAME} SET {attr} = ? WHERE id = ?",
+            f"UPDATE {self._table_name} SET {attr} = ? WHERE id = ?",
             (encoded, id),
         )
         if cur.rowcount == 0:
@@ -290,7 +301,7 @@ class DataManagerInterface:
             values.append(self._encode_value(attr, attr_dict[attr]))
 
         cur = self._execute_write_with_retry(
-            f"INSERT INTO {self.TABLE_NAME} ({', '.join(columns)}) VALUES ({', '.join(placeholders)})",
+            f"INSERT INTO {self._table_name} ({', '.join(columns)}) VALUES ({', '.join(placeholders)})",
             tuple(values),
         )
         return int(cur.lastrowid)  # pyright: ignore[reportArgumentType]
@@ -298,7 +309,7 @@ class DataManagerInterface:
     def rm_item(self, id: int) -> None:
         """Remove item ``id`` from the database."""
         cur = self._execute_write_with_retry(
-            f"DELETE FROM {self.TABLE_NAME} WHERE id = ?", (id,)
+            f"DELETE FROM {self._table_name} WHERE id = ?", (id,)
         )
         if cur.rowcount == 0:
             raise ValueError(f"No item with id {id}")
@@ -313,7 +324,7 @@ class DataManagerInterface:
             all item ids are returned.
         """
         if required_attitude is None or len(required_attitude) == 0:
-            cur = self._execute_read_with_retry(f"SELECT id FROM {self.TABLE_NAME}")
+            cur = self._execute_read_with_retry(f"SELECT id FROM {self._table_name}")
             return tuple(row[0] for row in cur.fetchall())
 
         if not isinstance(required_attitude, dict):
@@ -329,7 +340,7 @@ class DataManagerInterface:
 
         where = " AND ".join(clauses) if clauses else "1"
         cur = self._execute_read_with_retry(
-            f"SELECT id FROM {self.TABLE_NAME} WHERE {where}", tuple(values)
+            f"SELECT id FROM {self._table_name} WHERE {where}", tuple(values)
         )
         return tuple(row[0] for row in cur.fetchall())
 

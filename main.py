@@ -1,10 +1,11 @@
 """Timer management utilities backed by :class:`DataManager`.
 
 This module provides :class:`TimerManager` for manipulating timers stored in a
-SQLite database and :class:`TimerWatcher` which monitors those timers and fires
-callbacks when they expire.  The watcher runs in a background ``asyncio`` event
-loop so normal synchronous code can create timers without worrying about
-awaiting coroutine objects.
+SQLite database, :class:`TimerManagerProxy` which adds callback support to the
+manager, and :class:`TimerWatcher` which monitors timers and fires callbacks
+when they expire.  The watcher runs in a background ``asyncio`` event loop so
+normal synchronous code can create timers without worrying about awaiting
+coroutine objects.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from data import DataManager
 
@@ -45,11 +46,6 @@ class TimerManager:
             },
             database_path=database_path,
         )
-
-        # Registered callbacks are invoked with ``event`` and ``timer_id`` when
-        # timers are created, deleted or their state changes.  This is primarily
-        # used by :class:`TimerWatcher` but can also be hooked into by user code.
-        self._callbacks: List[Callable[[str, int], None]] = []
 
     def is_timer_exists(self, timer_id: int) -> bool:
         """Return ``True`` if ``timer_id`` exists in the database."""
@@ -85,26 +81,6 @@ class TimerManager:
         assert end_time == NOT_SET
         return True
 
-    def add_callback(self, callback: Callable[[str, int], None]) -> None:
-        """Register ``callback`` to be notified of timer events."""
-        if callback not in self._callbacks:
-            self._callbacks.append(callback)
-
-    # ------------------------------------------------------------------
-    def _notify(self, event: str, timer_id: int) -> None:
-        """Invoke callbacks for ``event`` affecting ``timer_id``.
-
-        Any exceptions raised by callbacks are suppressed so that timer
-        operations continue uninterrupted."""
-
-        for cb in list(self._callbacks):
-            try:
-                cb(event, timer_id)
-            except Exception:
-                # Callback misbehaviour should not break timer logic
-                pass
-
-    # ------------------------------------------------------------------
     def create_timer(self, name: str, duration: int) -> int:
         if not isinstance(name, str) or not isinstance(duration, int):
             raise ValueError("Name must be a string and duration must be an integer.")
@@ -125,13 +101,11 @@ class TimerManager:
                 "status": RUNNING,
             }
         )
-        self._notify("created", timer_id)
         return timer_id
 
     def rm_timer(self, timer_id: int) -> None:
         assert self.is_timer_exists(timer_id)
         self.dm.rm_item(timer_id)
-        self._notify("deleted", timer_id)
 
     def pause_timer(self, timer_id: int) -> None:
         assert self.is_timer_exists(timer_id)
@@ -142,7 +116,6 @@ class TimerManager:
         self.dm.set_attr(timer_id, "start_time", NOT_SET)
         self.dm.set_attr(timer_id, "end_time", NOT_SET)
         self.dm.set_attr(timer_id, "status", PAUSED)
-        self._notify("paused", timer_id)
 
     def resume_timer(self, timer_id: int) -> None:
         assert self.is_timer_exists(timer_id)
@@ -155,7 +128,6 @@ class TimerManager:
         self.dm.set_attr(timer_id, "start_time", start_time)
         self.dm.set_attr(timer_id, "end_time", end_time)
         self.dm.set_attr(timer_id, "status", RUNNING)
-        self._notify("resumed", timer_id)
 
     # ------------------------------------------------------------------
     def mark_timer_finished(self, timer_id: int) -> None:
@@ -172,7 +144,6 @@ class TimerManager:
         if status == FINISHED:
             return
         self.dm.set_attr(timer_id, "status", FINISHED)
-        self._notify("finished", timer_id)
 
     def get_timer_info(self, timer_id: int) -> Dict[str, Any]:
         if not self.is_timer_exists(timer_id):
@@ -185,6 +156,49 @@ class TimerManager:
             "end_time": self.dm.get_attr(timer_id, "end_time"),
             "status": self.dm.get_attr(timer_id, "status"),
         }
+
+
+class TimerManagerProxy:
+    """Proxy for :class:`TimerManager` that dispatches event callbacks."""
+
+    def __init__(self, manager: TimerManager) -> None:
+        self._manager = manager
+        self._callbacks: List[Callable[[str, int], None]] = []
+
+    def __getattr__(self, name: str) -> Any:  # pragma: no cover - simple delegation
+        return getattr(self._manager, name)
+
+    def add_callback(self, callback: Callable[[str, int], None]) -> None:
+        if callback not in self._callbacks:
+            self._callbacks.append(callback)
+
+    def _notify(self, event: str, timer_id: int) -> None:
+        for cb in list(self._callbacks):
+            try:
+                cb(event, timer_id)
+            except Exception:
+                pass
+
+    def create_timer(self, name: str, duration: int) -> int:
+        timer_id = self._manager.create_timer(name, duration)
+        self._notify("created", timer_id)
+        return timer_id
+
+    def rm_timer(self, timer_id: int) -> None:
+        self._manager.rm_timer(timer_id)
+        self._notify("deleted", timer_id)
+
+    def pause_timer(self, timer_id: int) -> None:
+        self._manager.pause_timer(timer_id)
+        self._notify("paused", timer_id)
+
+    def resume_timer(self, timer_id: int) -> None:
+        self._manager.resume_timer(timer_id)
+        self._notify("resumed", timer_id)
+
+    def mark_timer_finished(self, timer_id: int) -> None:
+        self._manager.mark_timer_finished(timer_id)
+        self._notify("finished", timer_id)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +215,7 @@ class TimerWatcher:
     Parameters
     ----------
     manager:
-        The :class:`TimerManager` instance to observe.
+        The :class:`TimerManagerProxy` instance to observe.
     on_finished:
         Callback invoked with ``timer_id`` when a timer reaches its end.  If not
         provided a simple printer function is used.
@@ -209,10 +223,11 @@ class TimerWatcher:
 
     def __init__(
         self,
-        manager: TimerManager,
+        manager: TimerManagerProxy,
         on_finished: Optional[Callable[[int], None]] = None,
     ) -> None:
-        self._manager = manager
+        self._proxy = manager
+        self._manager = manager._manager
         self._on_finished = on_finished or (lambda tid: print(f"Timer {tid} finished"))
 
         # Dedicated asyncio loop in a daemon thread so synchronous code can
@@ -249,8 +264,8 @@ class TimerWatcher:
         # Map of timer_id -> Future returned by ``run_coroutine_threadsafe``.
         self._tasks: Dict[int, asyncio.Future] = {}
 
-        # React to TimerManager events
-        self._manager.add_callback(self._handle_event)
+        # React to timer events via the proxy
+        self._proxy.add_callback(self._handle_event)
 
         # Start watching currently running timers
         for tid in self._manager.dm.find_item({"status": RUNNING}):
@@ -307,8 +322,8 @@ class TimerWatcher:
 
             if time.time() >= end_time:
                 self._worker_dm.set_attr(timer_id, "status", FINISHED)
-                # Notify via the main manager so external callbacks fire
-                self._manager._notify("finished", timer_id)
+                # Notify via the proxy so external callbacks fire
+                self._proxy._notify("finished", timer_id)
                 self._on_finished(timer_id)
                 return
             # Timer has been extended; loop and wait again for remaining time

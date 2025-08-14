@@ -78,7 +78,7 @@ class TimerWatcher:
         on_finished: Optional[Callable[[int], None]] = None,
     ) -> None:
         self._proxy = manager
-        self._manager = manager._manager
+        self._manager = manager._manager # type: ignore
         self._on_finished = on_finished or (lambda tid: print(f"Timer {tid} finished"))
 
         # Dedicated asyncio loop in a daemon thread so synchronous code can
@@ -116,7 +116,7 @@ class TimerWatcher:
         self._tasks: Dict[int, asyncio.Future] = {}
 
         # React to timer events via the proxy
-        self._proxy.add_callback(self._handle_event)
+        self._proxy.add_callback(self._handle_event) # type: ignore
 
         # Start watching currently running timers
         for tid in self._manager.dm.find_item({"status": RUNNING}):
@@ -136,7 +136,7 @@ class TimerWatcher:
             return
         coro = self._wait_for_timer(timer_id)
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        self._tasks[timer_id] = future
+        self._tasks[timer_id] = future # type: ignore
 
     def _cancel_watch(self, timer_id: int) -> None:
         fut = self._tasks.pop(timer_id, None)
@@ -147,8 +147,8 @@ class TimerWatcher:
         while True:
             # Retrieve remaining time for the timer
             try:
-                status = self._worker_dm.get_attr(timer_id, "status")
-                end_time = self._worker_dm.get_attr(timer_id, "end_time")
+                status = self._worker_dm.get_attr(timer_id, "status") # type: ignore
+                end_time = self._worker_dm.get_attr(timer_id, "end_time") # pyright: ignore[reportOptionalMemberAccess]
             except ValueError:
                 # Timer no longer exists
                 return
@@ -164,17 +164,17 @@ class TimerWatcher:
 
             # After waiting re-check that the timer is still valid and running
             try:
-                status = self._worker_dm.get_attr(timer_id, "status")
-                end_time = self._worker_dm.get_attr(timer_id, "end_time")
+                status = self._worker_dm.get_attr(timer_id, "status") # pyright: ignore[reportOptionalMemberAccess]
+                end_time = self._worker_dm.get_attr(timer_id, "end_time") # pyright: ignore[reportOptionalMemberAccess]
             except ValueError:
                 return
             if status != RUNNING:
                 return
 
             if time.time() >= end_time:
-                self._worker_dm.set_attr(timer_id, "status", FINISHED)
+                self._worker_dm.set_attr(timer_id, "status", FINISHED) # pyright: ignore[reportOptionalMemberAccess]
                 # Notify via the proxy so external callbacks fire
-                self._proxy._notify("finished", timer_id)
+                self._proxy._notify("finished", timer_id) # pyright: ignore[reportAttributeAccessIssue]
                 self._on_finished(timer_id)
                 return
             # Timer has been extended; loop and wait again for remaining time

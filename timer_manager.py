@@ -181,13 +181,13 @@ class TimerManager:
         if n <= 0:
             raise ValueError("N must be a positive integer.")
         return self.dm.top_n_by_attr(attr, n, largest)
-    def timers_about_finishing(self,number:int=1)->Optional[List[int]]:
+    def timers_about_finishing(self,number:int=1)->tuple[int,...]:
         """Return a list of timer IDs that are about to finish """
         if not isinstance(number, int) or number <= 0:
             raise ValueError("Number must be a positive integer.")
         
-        latest_timers=self.top_n_by_attr("end_time", number, largest=False) 
-        running_timer =[id for id in latest_timers if self.is_timer_running(id)]
+        return self.dm.top_n_by_attr("end_time", number, largest=False,required_attributes={"status":RUNNING})
+        # running_timer =[id for id in latest_timers if self.is_timer_running(id)]
         running_timer.sort()
         
 # class TimerWatcher2:

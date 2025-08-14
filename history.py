@@ -1,45 +1,55 @@
 
-class TimerManagerProxy:
-    """Proxy for :class:`TimerManager` that dispatches event callbacks."""
 
-    def __init__(self, manager: TimerManager) -> None:
-        self._manager = manager
-        self._callbacks: List[Callable[[str, int], None]] = []
+import asyncio
+import threading
+import time
+from typing import Any, Callable, Dict, List, Optional
 
-    def __getattr__(self, name: str) -> Any:  # pragma: no cover - simple delegation
-        return getattr(self._manager, name)
+from timer_manager import *
+from data import DataManager
+# if __name__=="__main__":
+#     from timer_manager import *
+# class TimerManagerProxy:
+#     """Proxy for :class:`TimerManager` that dispatches event callbacks."""
 
-    def add_callback(self, callback: Callable[[str, int], None]) -> None:
-        if callback not in self._callbacks:
-            self._callbacks.append(callback)
+#     def __init__(self, manager: TimerManager) -> None:
+#         self._manager = manager
+#         self._callbacks: List[Callable[[str, int], None]] = []
 
-    def _notify(self, event: str, timer_id: int) -> None:
-        for cb in list(self._callbacks):
-            try:
-                cb(event, timer_id)
-            except Exception:
-                pass
+#     def __getattr__(self, name: str) -> Any:  # pragma: no cover - simple delegation
+#         return getattr(self._manager, name)
 
-    def create_timer(self, name: str, duration: int) -> int:
-        timer_id = self._manager.create_timer(name, duration)
-        self._notify("created", timer_id)
-        return timer_id
+#     def add_callback(self, callback: Callable[[str, int], None]) -> None:
+#         if callback not in self._callbacks:
+#             self._callbacks.append(callback)
 
-    def rm_timer(self, timer_id: int) -> None:
-        self._manager.rm_timer(timer_id)
-        self._notify("deleted", timer_id)
+#     def _notify(self, event: str, timer_id: int) -> None:
+#         for cb in list(self._callbacks):
+#             try:
+#                 cb(event, timer_id)
+#             except Exception:
+#                 pass
 
-    def pause_timer(self, timer_id: int) -> None:
-        self._manager.pause_timer(timer_id)
-        self._notify("paused", timer_id)
+#     def create_timer(self, name: str, duration: int) -> int:
+#         timer_id = self._manager.create_timer(name, duration)
+#         self._notify("created", timer_id)
+#         return timer_id
 
-    def resume_timer(self, timer_id: int) -> None:
-        self._manager.resume_timer(timer_id)
-        self._notify("resumed", timer_id)
+#     def rm_timer(self, timer_id: int) -> None:
+#         self._manager.rm_timer(timer_id)
+#         self._notify("deleted", timer_id)
 
-    def mark_timer_finished(self, timer_id: int) -> None:
-        self._manager.mark_timer_finished(timer_id)
-        self._notify("finished", timer_id)
+#     def pause_timer(self, timer_id: int) -> None:
+#         self._manager.pause_timer(timer_id)
+#         self._notify("paused", timer_id)
+
+#     def resume_timer(self, timer_id: int) -> None:
+#         self._manager.resume_timer(timer_id)
+#         self._notify("resumed", timer_id)
+
+#     def mark_timer_finished(self, timer_id: int) -> None:
+#         self._manager.mark_timer_finished(timer_id)
+#         self._notify("finished", timer_id)
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +74,7 @@ class TimerWatcher:
 
     def __init__(
         self,
-        manager: TimerManagerProxy,
+        manager: TimerManager,
         on_finished: Optional[Callable[[int], None]] = None,
     ) -> None:
         self._proxy = manager

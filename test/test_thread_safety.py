@@ -4,9 +4,10 @@ import threading
 from typing import Dict
 
 from data import DataManager
-from main import TimerManager
+from timer_manager import TimerManager
 import pytest
 
+print(TimerManager)
 # ---------------------------------------------------------------------------
 # DataManager multi-thread tests
 

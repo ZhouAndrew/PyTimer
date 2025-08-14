@@ -77,3 +77,116 @@ def test_unsupported_type_raises(dm):
     # bool is not allowed for sorting per spec
     with pytest.raises(TypeError):
         dm.top_n_by_attr("active", 2)
+
+import pytest
+from typing import Any, Dict, Tuple
+
+from data import DataManager  # adjust if your module path differs
+
+
+@pytest.fixture
+def manager() -> DataManager:
+    column_types = {
+        "name": str,
+        "tags": list,
+        "meta": dict,
+        "count": int,
+        "rating": float,
+        "active": bool,
+    }
+    m = DataManager(column_types, database_path=":memory:")
+    return m
+
+
+@pytest.fixture
+def sample_ids(manager: DataManager):
+    """Insert a small, varied dataset and return the row IDs in insertion order."""
+    items = [
+        # 0
+        {"name": "alpha",   "tags": ["a", "b"],         "meta": {"k": 1},
+         "count": 5, "rating": 4.2, "active": True},
+        # 1
+        {"name": "bravo",   "tags": ["a"],              "meta": {"k": 2, "x": 0},
+         "count": 10, "rating": 3.5, "active": False},
+        # 2
+        {"name": "charlie", "tags": ["a", "b", "c", "d"], "meta": {},
+         "count": 7, "rating": 4.8, "active": True},
+        # 3
+        {"name": "delta",   "tags": [],                 "meta": {"k": 1, "z": 9},
+         "count": 2, "rating": 2.1, "active": True},
+    ]
+    ids = tuple(manager.add_item(x) for x in items)
+    return ids
+
+
+def test_sort_numeric_desc(manager: DataManager, sample_ids: Tuple[int, ...]):
+    got = manager.top_n_by_attr("count", n=2, largest=True)
+    # expect the two largest counts: 10 (idx1) then 7 (idx2)
+    assert got == (sample_ids[1], sample_ids[2])
+
+
+def test_sort_numeric_asc(manager: DataManager, sample_ids: Tuple[int, ...]):
+    got = manager.top_n_by_attr("count", n=3, largest=False)
+    # smallest three counts: 2 (idx3), 5 (idx0), 7 (idx2)
+    assert got == (sample_ids[3], sample_ids[0], sample_ids[2])
+
+
+def test_sort_text_length(manager: DataManager, sample_ids: Tuple[int, ...]):
+    # 'charlie' has the longest name
+    got = manager.top_n_by_attr("name", n=1, largest=True)
+    assert got == (sample_ids[2],)
+
+
+def test_sort_list_length(manager: DataManager, sample_ids: Tuple[int, ...]):
+    # longest tags is idx2 with 4 elements
+    got = manager.top_n_by_attr("tags", n=1, largest=True)
+    assert got == (sample_ids[2],)
+
+
+def test_filter_by_bool_and_sort_float(manager: DataManager, sample_ids: Tuple[int, ...]):
+    # Only active=True rows: idx0 (4.2), idx2 (4.8), idx3 (2.1)
+    got = manager.top_n_by_attr(
+        "rating", n=3, largest=True,
+        required_attributes={"active": True},
+    )
+    assert got == (sample_ids[2], sample_ids[0], sample_ids[3])
+
+
+def test_filter_by_dict_exact_match(manager: DataManager, sample_ids: Tuple[int, ...]):
+    # exact JSON equality: only idx0 has meta == {"k": 1}
+    got = manager.top_n_by_attr(
+        "count", n=5, largest=True,
+        required_attributes={"meta": {"k": 1}},
+    )
+    assert got == (sample_ids[0],)
+
+
+def test_filter_by_list_exact_match(manager: DataManager, sample_ids: Tuple[int, ...]):
+    # exact list equality: only idx0 has tags == ["a", "b"]
+    got = manager.top_n_by_attr(
+        "rating", n=5, largest=False,
+        required_attributes={"tags": ["a", "b"]},
+    )
+    assert got == (sample_ids[0],)
+
+
+def test_no_matches_returns_empty(manager: DataManager, sample_ids: Tuple[int, ...]):
+    got = manager.top_n_by_attr(
+        "count", n=3, largest=True,
+        required_attributes={"active": False, "tags": ["a", "b"]},  # no row matches both
+    )
+    assert got == ()
+
+
+def test_n_larger_than_available(manager: DataManager, sample_ids: Tuple[int, ...]):
+    got = manager.top_n_by_attr("count", n=999, largest=True)
+    # should just return all IDs in sorted order
+    assert len(got) == 4
+    # counts desc: idx1(10), idx2(7), idx0(5), idx3(2)
+    assert got == (sample_ids[1], sample_ids[2], sample_ids[0], sample_ids[3])
+
+
+def test_sort_unsupported_type_raises(manager: DataManager, sample_ids: Tuple[int, ...]):
+    # Sorting by bool should raise TypeError per implementation
+    with pytest.raises(TypeError):
+        manager.top_n_by_attr("active", n=1, largest=True)

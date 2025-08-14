@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from history import *
+# from history import *
 from data import DataManager
 
 
@@ -196,7 +196,7 @@ class TimerManager:
 #         self.dm=timer_manager
         
 #         self.watching_list=
-
+print(TimerManager)
 class TimerManagerProxy:
     """Proxy for :class:`TimerManager` that dispatches event callbacks."""
 

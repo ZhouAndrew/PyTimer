@@ -1,13 +1,13 @@
 import time
 from typing import List
 
-from main import (
+from timer_manager import (
     TimerManager,
     TimerManagerProxy,
-    TimerWatcher,
     PAUSED,
     FINISHED,
 )
+from history import TimerWatcher
 
 
 def test_watcher_marks_finished_and_callback(tmp_path):

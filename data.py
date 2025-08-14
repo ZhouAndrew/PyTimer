@@ -360,14 +360,18 @@ class DataManagerInterface:
             f"SELECT id FROM {self._table_name} WHERE {where}", tuple(values)
         )
         return tuple(row[0] for row in cur.fetchall())
+    # from typing import Any, Dict, Optional, Tuple
+
     def top_n_by_attr(
         self,
         attr: str,
         n: int,
-        largest: bool = True
+        largest: bool = True,
+        required_attributes: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, ...]:
         """
-        Return IDs of the first `n` items sorted by the given attribute.
+        Return IDs of the first `n` items sorted by the given attribute, optionally
+        filtered by exact matches on other attributes.
 
         Parameters
         ----------
@@ -378,29 +382,43 @@ class DataManagerInterface:
         largest : bool, default=True
             If True, return items with the largest values first.
             If False, return items with the smallest values first.
+        required_attributes : dict[str, Any] | None, default=None
+            If provided, only rows where every (key == value) pair matches will be considered.
+            Values are encoded via the manager's storage rules (e.g., bool -> 0/1,
+            list/dict -> JSON string), same as `find_item`.
         """
+        # Validate the sort attribute and decide the ORDER BY
         expected = self._validate_attr(attr)
 
         if expected in (int, float):
             order_clause = f"{attr} DESC" if largest else f"{attr} ASC"
-            sql = f"SELECT id FROM {self._table_name} ORDER BY {order_clause} LIMIT ?"
-            cur = self._execute_read_with_retry(sql, (n,))
-            return tuple(row[0] for row in cur.fetchall())
-
         elif expected in (str, list, dict):
-            # Use length for sorting (SQLite LENGTH works for TEXT)
-            # For list/dict, they are stored as JSON TEXT, so length is still valid
+            # For TEXT/list/dict (stored as JSON TEXT), sort by LENGTH
             order_clause = f"LENGTH({attr}) DESC" if largest else f"LENGTH({attr}) ASC"
-            sql = f"SELECT id FROM {self._table_name} ORDER BY {order_clause} LIMIT ?"
-            cur = self._execute_read_with_retry(sql, (n,))
-            return tuple(row[0] for row in cur.fetchall())
-
         else:
             raise TypeError(
                 f"Unsupported type for sorting: {expected.__name__}. "
                 "Must be int, float, str, list, or dict."
             )
 
+        # Build WHERE from required_attributes, encoding values as stored in DB
+        where_parts = []
+        params: list[Any] = []
+        if required_attributes:
+            for key, value in required_attributes.items():
+                self._validate_attr(key)  # ensure column exists & type is supported
+                enc_value = self._encode_value(key, value)
+                where_parts.append(f"{key} = ?")
+                params.append(enc_value)
+
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        sql = f"SELECT id FROM {self._table_name} {where_sql} ORDER BY {order_clause} LIMIT ?"
+        params.append(n)
+
+        cur = self._execute_read_with_retry(sql, tuple(params))
+        return tuple(row[0] for row in cur.fetchall())
+
 
 # The tests expect a ``DataManager`` class; expose one as an alias.
-# DataManager = DataManagerInterface
+DataManager = DataManagerInterface

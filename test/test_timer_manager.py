@@ -3,7 +3,7 @@
 import time
 import pytest
 
-from main import TimerManager, FINISHED, NOT_SET
+from timer_manager import TimerManager, FINISHED, NOT_SET
 
 
 def test_create_timer_validations(tmp_path):

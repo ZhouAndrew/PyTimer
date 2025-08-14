@@ -14,6 +14,7 @@ import asyncio
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, Executor
 
 # from history import *
 from data import DataManager
@@ -25,10 +26,13 @@ FINISHED = "finished"
 NOT_SET = -1.0
 PyTimer_TABLE_NAME = "PyTimer"
 
+
 class TimerManager:
     """Manage simple timers stored in a SQLite database."""
 
-    def __init__(self, database_path: str = "data.db",table_name:str=PyTimer_TABLE_NAME) -> None:
+    def __init__(
+        self, database_path: str = "data.db", table_name: str = PyTimer_TABLE_NAME
+    ) -> None:
         """Create a new ``TimerManager``.
 
         Parameters
@@ -66,7 +70,9 @@ class TimerManager:
         start_time = self.dm.get_attr(timer_id, "start_time")
         end_time = self.dm.get_attr(timer_id, "end_time")
         if end_time - duration != start_time:
-            raise RuntimeError("The timer's start and end times do not match the duration.")
+            raise RuntimeError(
+                "The timer's start and end times do not match the duration."
+            )
         return status == RUNNING
 
     def is_timer_paused(self, timer_id: int) -> bool:
@@ -156,10 +162,11 @@ class TimerManager:
             "start_time": self.dm.get_attr(timer_id, "start_time"),
             "end_time": self.dm.get_attr(timer_id, "end_time"),
             "status": self.dm.get_attr(timer_id, "status"),
-        }   
+        }
+
     def top_n_by_attr(self, attr: str, n: int, largest: bool = True) -> tuple[int, ...]:
         """Return the top N timer IDs sorted by the specified attribute.
-        
+
         Parameters
         ----------
         attr: str
@@ -172,7 +179,7 @@ class TimerManager:
         -------
         tuple[int, ...]
             A tuple of timer IDs sorted by the specified attribute.
-        
+
         Raises
         ------
         ValueError
@@ -181,28 +188,95 @@ class TimerManager:
         if n <= 0:
             raise ValueError("N must be a positive integer.")
         return self.dm.top_n_by_attr(attr, n, largest)
-    def timers_about_finishing(self,number:int=1)->tuple[int,...]:
-        """Return a list of timer IDs that are about to finish """
+
+    def timers_about_finishing(self, number: int = 1) -> tuple[int, ...]:
+        """Return a list of timer IDs that are about to finish"""
         if not isinstance(number, int) or number <= 0:
             raise ValueError("Number must be a positive integer.")
-        
-        return self.dm.top_n_by_attr("end_time", number, largest=False,required_attributes={"status":RUNNING})
-        # running_timer =[id for id in latest_timers if self.is_timer_running(id)]
-        running_timer.sort()
-        
+
+        return self.dm.top_n_by_attr(
+            "end_time", number, largest=False, required_attributes={"status": RUNNING}
+        )
+        # running_time r =[id for id in latest_timers if self.is_timer_running(id)]
+        # running_timer..
+        # sort()
+
+
 # class TimerWatcher2:
 #     def __init__(self,timer_manager:TimerManager=TimerManager(),call_back:function=lambda **args:return args ) -> None:
 #         """ check which timer is finished and call the callback function"""
 #         self.dm=timer_manager
-        
+
 #         self.watching_list=
 print(TimerManager)
+
+
 class TimerManagerProxy:
     """Proxy for :class:`TimerManager` that dispatches event callbacks."""
 
-    def __init__(self, manager: TimerManager) -> None:
+    def __init__(
+        self, manager: TimerManager, task_pool: Optional[Executor] = None
+    ) -> None:
         self._manager = manager
         self._callbacks: List[Callable[[str, int], None]] = []
+        self.task_pool = task_pool or ThreadPoolExecutor(max_workers=4)
+        self.task = None
+        self.new_tracking_task()
+
+    def _handle_event(self, event: str, timer_id: int) -> None:
+        """Handle timer events and update tracking_task."""
+        if event == "created":
+            # is it about finishing?
+            end_time = self._manager.dm.get_attr(timer_id, "end_time")
+            end_time_of_the_pre_timer = self.dm.get_attr(
+                self.the_closest_timers, "end_time"
+            )
+            if end_time < end_time_of_the_pre_timer:
+                self.new_tracking_task()
+        elif event == "deleted":
+            # If the deleted timer was the closest, update tracking_task
+            if timer_id in self.the_closest_timers:
+                self.new_tracking_task()
+        elif event == "finished":
+            # If a timer finished, update tracking_task
+            self.new_tracking_task()
+
+    def new_tracking_task(self):
+        self.the_closest_timers = self._manager.timers_about_finishing()
+        self.wait_timer(
+            self.the_closest_timers[0],
+            call_back=lambda timer_id: self.finish_timer(timer_id),
+        )
+
+    def wait_timer(self, timer_id: int, call_back: Optional[Callable] = None) -> None:
+
+        if call_back is None:
+            raise ValueError("call_back function is required")
+        assert self._manager.is_timer_exists(timer_id)
+        if self.task is not None:
+            self.task.cancel()
+
+        def waiting_task(
+            timer_id=timer_id, end_time=self._manager.dm.get_attr(timer_id, "end_time")
+        ):
+            import time
+
+            while end_time - time.time() > 0:
+                time.sleep(end_time - time.time())
+
+        self.task = self.task_pool.submit(waiting_task)
+        self.task.add_done_callback(lambda f: call_back(timer_id))
+
+    def finish_timer(self, timer_id: int) -> None:
+        """Mark a timer as finished and notify callbacks."""
+        if not self._manager.is_timer_exists(timer_id):
+            raise ValueError("Timer with this ID does not exist.")
+        end_time = self._manager.dm.get_attr(timer_id, "end_time")
+        assert end_time < time.time(), "Cannot finish a timer that has not yet ended."
+        self._manager.mark_timer_finished(timer_id)
+        self.new_tracking_task()
+
+        self._notify("finished", timer_id)
 
     def __getattr__(self, name: str) -> Any:  # pragma: no cover - simple delegation
         return getattr(self._manager, name)
@@ -213,10 +287,10 @@ class TimerManagerProxy:
 
     def _notify(self, event: str, timer_id: int) -> None:
         for cb in list(self._callbacks):
-            try:
-                cb(event, timer_id)
-            except Exception:
-                pass
+            # try:
+            cb(event, timer_id)
+            # except Exception:
+            # pass
 
     def create_timer(self, name: str, duration: int) -> int:
         timer_id = self._manager.create_timer(name, duration)
@@ -238,5 +312,12 @@ class TimerManagerProxy:
     def mark_timer_finished(self, timer_id: int) -> None:
         self._manager.mark_timer_finished(timer_id)
         self._notify("finished", timer_id)
-        
-        
+
+
+# class TimerWatcher:
+# """Monitor timers managed by :class:`TimerManager`.
+
+# This class runs an internal ``asyncio`` event loop in a daemon thread to
+# watch for timer expirations and fire callbacks when they finish.
+# """
+# def __ini__(self):

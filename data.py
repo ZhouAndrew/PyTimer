@@ -360,7 +360,47 @@ class DataManagerInterface:
             f"SELECT id FROM {self._table_name} WHERE {where}", tuple(values)
         )
         return tuple(row[0] for row in cur.fetchall())
+    def top_n_by_attr(
+        self,
+        attr: str,
+        n: int,
+        largest: bool = True
+    ) -> Tuple[int, ...]:
+        """
+        Return IDs of the first `n` items sorted by the given attribute.
+
+        Parameters
+        ----------
+        attr : str
+            The column name to sort by. Must be int, float, or length of str/list/dict.
+        n : int
+            Number of results to return.
+        largest : bool, default=True
+            If True, return items with the largest values first.
+            If False, return items with the smallest values first.
+        """
+        expected = self._validate_attr(attr)
+
+        if expected in (int, float):
+            order_clause = f"{attr} DESC" if largest else f"{attr} ASC"
+            sql = f"SELECT id FROM {self._table_name} ORDER BY {order_clause} LIMIT ?"
+            cur = self._execute_read_with_retry(sql, (n,))
+            return tuple(row[0] for row in cur.fetchall())
+
+        elif expected in (str, list, dict):
+            # Use length for sorting (SQLite LENGTH works for TEXT)
+            # For list/dict, they are stored as JSON TEXT, so length is still valid
+            order_clause = f"LENGTH({attr}) DESC" if largest else f"LENGTH({attr}) ASC"
+            sql = f"SELECT id FROM {self._table_name} ORDER BY {order_clause} LIMIT ?"
+            cur = self._execute_read_with_retry(sql, (n,))
+            return tuple(row[0] for row in cur.fetchall())
+
+        else:
+            raise TypeError(
+                f"Unsupported type for sorting: {expected.__name__}. "
+                "Must be int, float, str, list, or dict."
+            )
 
 
 # The tests expect a ``DataManager`` class; expose one as an alias.
-DataManager = DataManagerInterface
+# DataManager = DataManagerInterface

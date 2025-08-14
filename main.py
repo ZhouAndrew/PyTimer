@@ -15,6 +15,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from history import *
 from data import DataManager
 
 
@@ -22,12 +23,12 @@ PAUSED = "paused"
 RUNNING = "running"
 FINISHED = "finished"
 NOT_SET = -1.0
-
+PyTimer_TABLE_NAME = "PyTimer"
 
 class TimerManager:
     """Manage simple timers stored in a SQLite database."""
 
-    def __init__(self, database_path: str = "data.db") -> None:
+    def __init__(self, database_path: str = "data.db",table_name:str=PyTimer_TABLE_NAME) -> None:
         """Create a new ``TimerManager``.
 
         Parameters
@@ -155,8 +156,46 @@ class TimerManager:
             "start_time": self.dm.get_attr(timer_id, "start_time"),
             "end_time": self.dm.get_attr(timer_id, "end_time"),
             "status": self.dm.get_attr(timer_id, "status"),
-        }
-
+        }   
+    def top_n_by_attr(self, attr: str, n: int, largest: bool = True) -> tuple[int, ...]:
+        """Return the top N timer IDs sorted by the specified attribute.
+        
+        Parameters
+        ----------
+        attr: str
+            The attribute to sort by (e.g., "duration", "name").
+        n: int
+            The number of top items to return.
+        largest: bool
+            If ``True``, return the largest values; if ``False``, return the smallest.
+        Returns
+        -------
+        tuple[int, ...]
+            A tuple of timer IDs sorted by the specified attribute.
+        
+        Raises
+        ------
+        ValueError
+            If the attribute does not exist or is not sortable.
+        """
+        if n <= 0:
+            raise ValueError("N must be a positive integer.")
+        return self.dm.top_n_by_attr(attr, n, largest)
+    def timers_about_finishing(self,number:int=1)->Optional[List[int]]:
+        """Return a list of timer IDs that are about to finish """
+        if not isinstance(number, int) or number <= 0:
+            raise ValueError("Number must be a positive integer.")
+        
+        latest_timers=self.top_n_by_attr("end_time", number, largest=False) 
+        running_timer =[id for id in latest_timers if self.is_timer_running(id)]
+        running_timer.sort()
+        
+# class TimerWatcher2:
+#     def __init__(self,timer_manager:TimerManager=TimerManager(),call_back:function=lambda **args:return args ) -> None:
+#         """ check which timer is finished and call the callback function"""
+#         self.dm=timer_manager
+        
+#         self.watching_list=
 
 class TimerManagerProxy:
     """Proxy for :class:`TimerManager` that dispatches event callbacks."""
@@ -199,149 +238,5 @@ class TimerManagerProxy:
     def mark_timer_finished(self, timer_id: int) -> None:
         self._manager.mark_timer_finished(timer_id)
         self._notify("finished", timer_id)
-
-
-
-# ---------------------------------------------------------------------------
-# TimerWatcher
-
-
-# class TimerWatcher:
-#     """Monitor timers managed by :class:`TimerManager`.
-
-#     The watcher keeps track of all running timers and waits for them to expire
-#     in a background ``asyncio`` event loop.  When a timer finishes it is marked
-#     as ``finished`` in the database and a user supplied callback is invoked.
-
-#     Parameters
-#     ----------
-#     manager:
-#         The :class:`TimerManagerProxy` instance to observe.
-#     on_finished:
-#         Callback invoked with ``timer_id`` when a timer reaches its end.  If not
-#         provided a simple printer function is used.
-#     """
-
-#     def __init__(
-#         self,
-#         manager: TimerManagerProxy,
-#         on_finished: Optional[Callable[[int], None]] = None,
-#     ) -> None:
-#         self._proxy = manager
-#         self._manager = manager._manager
-#         self._on_finished = on_finished or (lambda tid: print(f"Timer {tid} finished"))
-
-#         # Dedicated asyncio loop in a daemon thread so synchronous code can
-#         # continue executing while timers are monitored.  Because SQLite
-#         # connections are not thread-safe, the watcher uses its own
-#         # :class:`DataManager` instance backed by the same database file.
-#         self._loop = asyncio.new_event_loop()
-#         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-#         self._thread.start()
-
-#         # DataManager for use inside the watcher thread.  It must be constructed
-#         # in that thread because SQLite connections are not thread-safe.  A
-#         # blocking ``Event`` is used so that ``__init__`` waits until the
-#         # connection is ready before proceeding.
-#         self._worker_dm: Optional[DataManager] = None
-#         ready = threading.Event()
-
-#         async def _init_dm() -> None:
-#             self._worker_dm = DataManager(
-#                 {
-#                     "duration": float,
-#                     "start_time": float,
-#                     "end_time": float,
-#                     "status": str,
-#                     "name": str,
-#                 },
-#                 database_path=self._manager.dm._db_path,  # type: ignore[attr-defined]
-#             )
-#             ready.set()
-
-#         asyncio.run_coroutine_threadsafe(_init_dm(), self._loop)
-#         ready.wait()
-
-#         # Map of timer_id -> Future returned by ``run_coroutine_threadsafe``.
-#         self._tasks: Dict[int, asyncio.Future] = {}
-
-#         # React to timer events via the proxy
-#         self._proxy.add_callback(self._handle_event)
-
-#         # Start watching currently running timers
-#         for tid in self._manager.dm.find_item({"status": RUNNING}):
-#             self._schedule_watch(int(tid))
-
-#     # ------------------------------------------------------------------
-#     # Event handling
-#     def _handle_event(self, event: str, timer_id: int) -> None:
-#         if event in {"created", "resumed"}:
-#             self._schedule_watch(timer_id)
-#         elif event in {"paused", "deleted", "finished"}:
-#             self._cancel_watch(timer_id)
-
-#     # ------------------------------------------------------------------
-#     def _schedule_watch(self, timer_id: int) -> None:
-#         if timer_id in self._tasks:
-#             return
-#         coro = self._wait_for_timer(timer_id)
-#         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-#         self._tasks[timer_id] = future
-
-#     def _cancel_watch(self, timer_id: int) -> None:
-#         fut = self._tasks.pop(timer_id, None)
-#         if fut is not None:
-#             fut.cancel()
-
-#     async def _wait_for_timer(self, timer_id: int) -> None:
-#         while True:
-#             # Retrieve remaining time for the timer
-#             try:
-#                 status = self._worker_dm.get_attr(timer_id, "status")
-#                 end_time = self._worker_dm.get_attr(timer_id, "end_time")
-#             except ValueError:
-#                 # Timer no longer exists
-#                 return
-#             if status != RUNNING:
-#                 return
-
-#             now = time.time()
-#             delay = max(0.0, end_time - now)
-#             try:
-#                 await asyncio.sleep(delay)
-#             except asyncio.CancelledError:
-#                 return
-
-#             # After waiting re-check that the timer is still valid and running
-#             try:
-#                 status = self._worker_dm.get_attr(timer_id, "status")
-#                 end_time = self._worker_dm.get_attr(timer_id, "end_time")
-#             except ValueError:
-#                 return
-#             if status != RUNNING:
-#                 return
-
-#             if time.time() >= end_time:
-#                 self._worker_dm.set_attr(timer_id, "status", FINISHED)
-#                 # Notify via the proxy so external callbacks fire
-#                 self._proxy._notify("finished", timer_id)
-#                 self._on_finished(timer_id)
-#                 return
-#             # Timer has been extended; loop and wait again for remaining time
-
-#     # ------------------------------------------------------------------
-#     def stop(self) -> None:
-#         """Cancel all tasks and stop the background event loop."""
-#         for tid in list(self._tasks):
-#             self._cancel_watch(tid)
-#         self._loop.call_soon_threadsafe(self._loop.stop)
-#         self._thread.join()
-#         try:
-#             self._loop.close()
-#         finally:
-#             try:
-#                 if self._worker_dm is not None:
-#                     self._worker_dm._conn.close()  # type: ignore[attr-defined]
-#             except Exception:
-#                 pass
-
+        
+        

@@ -241,8 +241,21 @@ class TimerManagerProxy:
             # If a timer finished, update tracking_task
             self.new_tracking_task()
 
-    def new_tracking_task(self):
+    def new_tracking_task(self) -> None:
+        """Start waiting on the next timer about to finish.
+
+        If there are no running timers, any existing waiting task is cancelled
+        and the proxy simply idles until a new timer is created.
+        """
+
         self.the_closest_timers = self._manager.timers_about_finishing()
+        # When no timers are active, stop tracking.
+        if not self.the_closest_timers:
+            if self.task is not None:
+                self.task.cancel()
+                self.task = None
+            return
+
         self.wait_timer(
             self.the_closest_timers[0],
             call_back=lambda timer_id: self.finish_timer(timer_id),
@@ -295,11 +308,13 @@ class TimerManagerProxy:
     def create_timer(self, name: str, duration: int) -> int:
         timer_id = self._manager.create_timer(name, duration)
         self._notify("created", timer_id)
+        self.new_tracking_task()
         return timer_id
 
     def rm_timer(self, timer_id: int) -> None:
         self._manager.rm_timer(timer_id)
         self._notify("deleted", timer_id)
+        self.new_tracking_task()
 
     def pause_timer(self, timer_id: int) -> None:
         self._manager.pause_timer(timer_id)

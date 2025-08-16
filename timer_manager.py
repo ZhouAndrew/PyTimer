@@ -289,7 +289,7 @@ class TimerManagerProxy:
         for cb in list(self._callbacks):
             # try:
             cb(event, timer_id)
-            # except Exception:
+            # except Exception: 
             # pass
 
     def create_timer(self, name: str, duration: int) -> int:

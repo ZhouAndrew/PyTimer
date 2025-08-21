@@ -226,13 +226,17 @@ class TimerManagerProxy:
     def _handle_event(self, event: str, timer_id: int) -> None:
         """Handle timer events and update tracking_task."""
         if event == "created":
-            # is it about finishing?
+            # If a new timer will finish sooner than the currently tracked
+            # one, or if no timer is being tracked, start a new waiting task.
             end_time = self._manager.dm.get_attr(timer_id, "end_time")
-            end_time_of_the_pre_timer = self.dm.get_attr(
-                self.the_closest_timers, "end_time"
-            )
-            if end_time < end_time_of_the_pre_timer:
+            if not self.the_closest_timers:
                 self.new_tracking_task()
+            else:
+                current_end = self._manager.dm.get_attr(
+                    self.the_closest_timers[0], "end_time"
+                )
+                if end_time < current_end:
+                    self.new_tracking_task()
         elif event == "deleted":
             # If the deleted timer was the closest, update tracking_task
             if timer_id in self.the_closest_timers:
@@ -242,7 +246,20 @@ class TimerManagerProxy:
             self.new_tracking_task()
 
     def new_tracking_task(self):
+        """Start waiting for the next timer to finish.
+
+        If there are no running timers any existing waiting task is
+        cancelled to avoid holding on to stale futures.  Otherwise the
+        closest timer is scheduled and will trigger ``finish_timer`` when
+        complete.
+        """
         self.the_closest_timers = self._manager.timers_about_finishing()
+        if not self.the_closest_timers:
+            if self.task is not None:
+                self.task.cancel()
+                self.task = None
+            return
+
         self.wait_timer(
             self.the_closest_timers[0],
             call_back=lambda timer_id: self.finish_timer(timer_id),

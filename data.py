@@ -387,14 +387,23 @@ class DataManagerInterface:
             Values are encoded via the manager's storage rules (e.g., bool -> 0/1,
             list/dict -> JSON string), same as `find_item`.
         """
+        # ``n`` must be a non-negative integer; ``0`` yields an empty result
+        if not isinstance(n, int):
+            raise TypeError("n must be an integer")
+        if n <= 0:
+            return ()
+
+        if required_attributes is not None and not isinstance(required_attributes, dict):
+            raise TypeError("required_attributes must be a dict or None")
+
         # Validate the sort attribute and decide the ORDER BY
         expected = self._validate_attr(attr)
 
         if expected in (int, float):
-            order_clause = f"{attr} DESC" if largest else f"{attr} ASC"
+            primary_order = f"{attr} DESC" if largest else f"{attr} ASC"
         elif expected in (str, list, dict):
             # For TEXT/list/dict (stored as JSON TEXT), sort by LENGTH
-            order_clause = f"LENGTH({attr}) DESC" if largest else f"LENGTH({attr}) ASC"
+            primary_order = f"LENGTH({attr}) DESC" if largest else f"LENGTH({attr}) ASC"
         else:
             raise TypeError(
                 f"Unsupported type for sorting: {expected.__name__}. "
@@ -402,7 +411,7 @@ class DataManagerInterface:
             )
 
         # Build WHERE from required_attributes, encoding values as stored in DB
-        where_parts = []
+        where_parts: list[str] = []
         params: list[Any] = []
         if required_attributes:
             for key, value in required_attributes.items():
@@ -413,7 +422,12 @@ class DataManagerInterface:
 
         where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
-        sql = f"SELECT id FROM {self._table_name} {where_sql} ORDER BY {order_clause} LIMIT ?"
+        # Add ``id`` as a secondary sort key for deterministic ordering
+        order_clause = f"{primary_order}, id ASC"
+        sql = (
+            f"SELECT id FROM {self._table_name} {where_sql} "
+            f"ORDER BY {order_clause} LIMIT ?"
+        )
         params.append(n)
 
         cur = self._execute_read_with_retry(sql, tuple(params))

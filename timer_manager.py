@@ -222,7 +222,10 @@ class TimerManagerProxy:
         self.task_pool = task_pool or ThreadPoolExecutor(max_workers=4)
         self.task = None
         self.new_tracking_task()
+        self.add_callback(self._handle_event)
 
+        # Track the closest timers that are about to finish
+        # self.the_closest_timers: Optional[int] = None
     def _handle_event(self, event: str, timer_id: int) -> None:
         """Handle timer events and update tracking_task."""
         if event == "created":
@@ -308,13 +311,13 @@ class TimerManagerProxy:
     def create_timer(self, name: str, duration: int) -> int:
         timer_id = self._manager.create_timer(name, duration)
         self._notify("created", timer_id)
-        self.new_tracking_task()
+        # self.new_tracking_task()
         return timer_id
 
     def rm_timer(self, timer_id: int) -> None:
         self._manager.rm_timer(timer_id)
         self._notify("deleted", timer_id)
-        self.new_tracking_task()
+        # self.new_tracking_task()
 
     def pause_timer(self, timer_id: int) -> None:
         self._manager.pause_timer(timer_id)
